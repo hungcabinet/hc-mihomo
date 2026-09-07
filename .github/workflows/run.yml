@@ -79,6 +79,13 @@ jobs:
         run: |
           wget https://github.com/MetaCubeX/mihomo/archive/refs/tags/v${{ env.VERSION }}.tar.gz -O mihomo-${{ env.VERSION }}.tar.gz
           tar -xf mihomo-${{ env.VERSION }}.tar.gz && mv mihomo-${{ env.VERSION }} mihomo
+          cd mihomo
+          SING_TUN_VERSION=$(cat go.mod | grep github.com/metacubex/sing-tun | awk '{ print $2 }' | sed 's|v||g')
+          echo -e "\nreplace github.com/metacubex/sing-tun v${SING_TUN_VERSION} => ../sing-tun" >> go.mod
+          echo -e "sing-tun version: ${SING_TUN_VERSION}"
+          cd ..
+          wget https://github.com/MetaCubeX/sing-tun/archive/refs/tags/v${SING_TUN_VERSION}.tar.gz -O sing-tun-${SING_TUN_VERSION}.tar.gz
+          tar -xf sing-tun-${SING_TUN_VERSION}.tar.gz && mv sing-tun-${SING_TUN_VERSION} sing-tun
           ls -lha
 
       - name: Apply patches
@@ -87,6 +94,9 @@ jobs:
           cd mihomo
           cp component/memory/memory_freebsd_amd64.go component/memory/memory_freebsd_riscv64.go
           patch -p1 < ../mihomo.patch
+          cd ../sing-tun
+          patch -p1 < ../sing-tun.patch
+          cp monitor_darwin.go monitor_freebsd.go
 
       - name: Setup go
         if: github.event_name != 'schedule' || env.NEW == 'true'
