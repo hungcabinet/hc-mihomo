@@ -85,6 +85,28 @@ index eea6e5fd..83b6f085 100644
  
  package process
  
+diff --git a/listener/config/tun.go b/listener/config/tun.go
+index 8c125b66..8f33bbf5 100644
+--- a/listener/config/tun.go
++++ b/listener/config/tun.go
+@@ -24,6 +24,7 @@ type Tun struct {
+ 	Inet6Address                          []netip.Prefix `yaml:"inet6-address" json:"inet6-address,omitempty"`
+ 	IPRoute2TableIndex                    int            `yaml:"iproute2-table-index" json:"iproute2-table-index,omitempty"`
+ 	IPRoute2RuleIndex                     int            `yaml:"iproute2-rule-index" json:"iproute2-rule-index,omitempty"`
++	FIBIndex                              int            `yaml:"fib-index" json:"fib-index,omitempty"`
+ 	AutoRedirect                          bool           `yaml:"auto-redirect" json:"auto-redirect,omitempty"`
+ 	AutoRedirectInputMark                 uint32         `yaml:"auto-redirect-input-mark" json:"auto-redirect-input-mark,omitempty"`
+ 	AutoRedirectOutputMark                uint32         `yaml:"auto-redirect-output-mark" json:"auto-redirect-output-mark,omitempty"`
+@@ -128,6 +129,9 @@ func (t *Tun) Equal(other Tun) bool {
+ 	if t.IPRoute2RuleIndex != other.IPRoute2RuleIndex {
+ 		return false
+ 	}
++	if t.FIBIndex != other.FIBIndex {
++		return false
++	}
+ 	if t.AutoRedirect != other.AutoRedirect {
+ 		return false
+ 	}
 diff --git a/listener/listener.go b/listener/listener.go
 index 37bcbebf..cb74ea97 100644
 --- a/listener/listener.go
@@ -241,3 +263,26 @@ index 9eb199f0..0a3199a3 100644
 +	addr, _ := netip.AddrFromSlice(ip)
 +	return socks5.AddrFromStdAddrPort(netip.AddrPortFrom(addr, port)), nil
  }
+diff --git a/listener/sing_tun/server.go b/listener/sing_tun/server.go
+index 56369945..cdd6db83 100644
+--- a/listener/sing_tun/server.go
++++ b/listener/sing_tun/server.go
+@@ -207,6 +207,10 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
+ 	if ruleIndex == 0 {
+ 		ruleIndex = tun.DefaultIPRoute2RuleIndex
+ 	}
++	fibIndex := options.FIBIndex
++	if fibIndex == 0 {
++		fibIndex = tun.DefaultFIBIndex
++	}
+ 	autoRedirectFallbackRuleIndex := options.AutoRedirectIPRoute2FallbackRuleIndex
+ 	if autoRedirectFallbackRuleIndex == 0 {
+ 		autoRedirectFallbackRuleIndex = tun.DefaultIPRoute2AutoRedirectFallbackRuleIndex
+@@ -372,6 +376,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
+ 		IPRoute2TableIndex:                    tableIndex,
+ 		IPRoute2RuleIndex:                     ruleIndex,
+ 		IPRoute2AutoRedirectFallbackRuleIndex: autoRedirectFallbackRuleIndex,
++		FIBIndex:                              fibIndex,
+ 		AutoRedirectInputMark:                 inputMark,
+ 		AutoRedirectOutputMark:                outputMark,
+ 		Inet4LoopbackAddress:                  common.Filter(options.LoopbackAddress, netip.Addr.Is4),
