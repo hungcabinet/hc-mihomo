@@ -49,8 +49,8 @@ jobs:
             echo "wrong version"
             exit 1
           fi
-          echo "RELEASE_NAME=${LATEST_VERSION}-vincent" >> $GITHUB_ENV
-          echo "TAG_NAME=v${LATEST_VERSION}-vincent" >> $GITHUB_ENV
+          echo "RELEASE_NAME=${LATEST_VERSION}" >> $GITHUB_ENV
+          echo "TAG_NAME=v${LATEST_VERSION}" >> $GITHUB_ENV
           echo "TAGS=with_gvisor" >> $GITHUB_ENV
           echo "VERSION=${LATEST_VERSION}" >> $GITHUB_ENV
         shell: bash

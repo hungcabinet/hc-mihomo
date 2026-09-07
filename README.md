@@ -20,7 +20,7 @@ This ***self-use repo*** automatically build the latest version with patches
 
 1. Match process 匹配进程
 
-2. Redirect (since `1.19.24-vincent`)
+2. Redirect (since `1.19.24`)
 
 ## Examples 示例
 
