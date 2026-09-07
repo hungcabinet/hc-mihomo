@@ -11,6 +11,10 @@ on:
       - "**/README.md"
       - "**/template.yaml"
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   delete:
     runs-on: ubuntu-latest
