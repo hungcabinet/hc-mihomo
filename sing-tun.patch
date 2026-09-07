@@ -44,7 +44,7 @@ index c2b4254..004700c 100644
  package tun
  
 diff --git a/tun.go b/tun.go
-index bc0ca92..3fddf71 100644
+index c4ba540..8750388 100644
 --- a/tun.go
 +++ b/tun.go
 @@ -69,6 +69,7 @@ const (
@@ -63,7 +63,7 @@ index bc0ca92..3fddf71 100644
  	AutoRedirectMarkMode                  bool
  	AutoRedirectInputMark                 uint32
  	AutoRedirectOutputMark                uint32
-@@ -131,6 +133,8 @@ func (o *Options) Inet4GatewayAddr() netip.Addr {
+@@ -133,6 +135,8 @@ func (o *Options) Inet4GatewayAddr() netip.Addr {
  				return o.Inet4Address[0].Addr().Next()
  			}
  		case "darwin":
@@ -72,7 +72,7 @@ index bc0ca92..3fddf71 100644
  			return o.Inet4Address[0].Addr()
  		default:
  			if HasNextAddress(o.Inet4Address[0], 1) {
-@@ -155,6 +159,8 @@ func (o *Options) Inet6GatewayAddr() netip.Addr {
+@@ -157,6 +161,8 @@ func (o *Options) Inet6GatewayAddr() netip.Addr {
  				return o.Inet6Address[0].Addr().Next()
  			}
  		case "darwin":
