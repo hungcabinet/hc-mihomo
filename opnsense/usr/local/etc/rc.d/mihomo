@@ -1,0 +1,257 @@
+#!/bin/sh
+
+# PROVIDE: mihomo
+# REQUIRE: NETWORKING SERVERS
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="mihomo"
+rcvar="mihomo_enable"
+desc="mihomo service"
+
+pidfile="/var/run/${name}.pid"
+logfile="/var/log/${name}.log"
+stoppedfile="/var/run/${name}.stopped"
+procname="/usr/local/bin/mihomo"
+command="/usr/sbin/daemon"
+
+start_precmd="mihomo_prestart"
+start_postcmd="mihomo_poststart"
+stop_cmd="mihomo_stop"
+status_cmd="mihomo_status"
+restart_cmd="mihomo_restart"
+extra_commands="health"
+health_cmd="mihomo_health"
+
+load_rc_config "${name}"
+
+: ${mihomo_enable:="NO"}
+: ${mihomo_dir:="/usr/local/etc/mihomo"}
+: ${mihomo_config:="${mihomo_dir}/config.yaml"}
+: ${mihomo_flags:=""}
+
+required_files="${procname} ${mihomo_config}"
+command_args="-P ${pidfile} -f -o ${logfile} -t ${name}:daemon ${procname} -d ${mihomo_dir} -f ${mihomo_config} ${mihomo_flags}"
+
+mihomo_cmd_pattern()
+{
+	printf '%s -d %s' "${procname}" "${mihomo_dir}"
+}
+
+mihomo_tun_device()
+{
+	if [ ! -f "${mihomo_config}" ]; then
+		return 0
+	fi
+
+	awk '
+		/^[[:space:]]*#/ { next }
+		/^tun:[[:space:]]*$/ { in_tun = 1; next }
+		in_tun && /^[^[:space:]#]/ { exit }
+		in_tun && $1 == "device:" {
+			val = $2
+			gsub(/["\047]/, "", val)
+			print val
+			exit
+		}
+	' "${mihomo_config}"
+}
+
+mihomo_destroy_tun()
+{
+	tun_device="$(mihomo_tun_device)"
+	if [ -z "${tun_device}" ] || ! ifconfig "${tun_device}" >/dev/null 2>&1; then
+		return 0
+	fi
+	if [ "${1}" != "quiet" ]; then
+		echo "Removing stale ${tun_device} interface."
+	fi
+	ifconfig "${tun_device}" destroy
+}
+
+mihomo_prestart()
+{
+	touch "${logfile}"
+	rm -f "${stoppedfile}"
+
+	if ! "${procname}" -t -d "${mihomo_dir}" -f "${mihomo_config}" >> "${logfile}" 2>&1; then
+		echo "Mihomo configuration validation failed."
+		return 1
+	fi
+
+	if [ -f "${pidfile}" ]; then
+		if kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
+			echo "${name} is already running as pid $(cat "${pidfile}")."
+			return 1
+		fi
+		rm -f "${pidfile}"
+	fi
+
+	if pgrep -f "$(mihomo_cmd_pattern)" >/dev/null 2>&1; then
+		echo "A mihomo process is already running; refusing to start another instance."
+		return 1
+	fi
+
+	mihomo_destroy_tun || return 1
+}
+
+mihomo_poststart()
+{
+	sleep 1
+
+	if [ -f "${pidfile}" ]; then
+		daemon_pid="$(cat "${pidfile}" 2>/dev/null)"
+		if [ -n "${daemon_pid}" ] && kill -0 "${daemon_pid}" 2>/dev/null; then
+			mihomo_pid="$(pgrep -P "${daemon_pid}" mihomo 2>/dev/null | head -n 1)"
+			if [ -n "${mihomo_pid}" ] && kill -0 "${mihomo_pid}" 2>/dev/null; then
+				echo "${name} started: daemon pid ${daemon_pid}, mihomo pid ${mihomo_pid}."
+				return 0
+			fi
+		fi
+	fi
+
+	echo "${name} failed to start."
+	return 1
+}
+
+mihomo_stop()
+{
+	stopped=0
+
+	if [ "${mihomo_restarting:-0}" -eq 0 ]; then
+		touch "${stoppedfile}"
+	fi
+
+	if [ -f "${pidfile}" ]; then
+		daemon_pid="$(cat "${pidfile}" 2>/dev/null)"
+		if [ -n "${daemon_pid}" ] && kill -0 "${daemon_pid}" 2>/dev/null; then
+			mihomo_pids="$(pgrep -P "${daemon_pid}" mihomo 2>/dev/null)"
+
+			if [ -n "${mihomo_pids}" ]; then
+				echo "Stopping ${name} child process(es): ${mihomo_pids}"
+				kill ${mihomo_pids} 2>/dev/null || true
+			fi
+
+			echo "Stopping ${name} wrapper process: ${daemon_pid}"
+			kill "${daemon_pid}" 2>/dev/null || true
+			stopped=1
+
+			for _ in 1 2 3 4 5 6 7 8 9 10; do
+				still_running=0
+
+				if kill -0 "${daemon_pid}" 2>/dev/null; then
+					still_running=1
+				fi
+
+				for pid in ${mihomo_pids}; do
+					if kill -0 "${pid}" 2>/dev/null; then
+						still_running=1
+						break
+					fi
+				done
+
+				[ "${still_running}" -eq 0 ] && break
+				sleep 1
+			done
+
+			if kill -0 "${daemon_pid}" 2>/dev/null; then
+				kill -KILL "${daemon_pid}" 2>/dev/null || true
+			fi
+
+			for pid in ${mihomo_pids}; do
+				if kill -0 "${pid}" 2>/dev/null; then
+					kill -KILL "${pid}" 2>/dev/null || true
+				fi
+			done
+		fi
+	fi
+
+	extra_pids="$(pgrep -f "$(mihomo_cmd_pattern)" 2>/dev/null)"
+	if [ -n "${extra_pids}" ]; then
+		echo "Stopping stray ${name} process(es): ${extra_pids}"
+		kill ${extra_pids} 2>/dev/null || true
+		stopped=1
+		sleep 1
+		for pid in ${extra_pids}; do
+			if kill -0 "${pid}" 2>/dev/null; then
+				kill -KILL "${pid}" 2>/dev/null || true
+			fi
+		done
+	fi
+
+	rm -f "${pidfile}"
+	mihomo_destroy_tun quiet || true
+
+	if pgrep -f "$(mihomo_cmd_pattern)" >/dev/null 2>&1; then
+		echo "${name} could not be stopped completely."
+		return 1
+	fi
+
+	if [ "${stopped}" -eq 1 ]; then
+		echo "${name} stopped."
+	else
+		echo "${name} is not running."
+	fi
+
+	return 0
+}
+
+mihomo_status()
+{
+	if [ -f "${pidfile}" ]; then
+		daemon_pid="$(cat "${pidfile}" 2>/dev/null)"
+		if [ -n "${daemon_pid}" ] && kill -0 "${daemon_pid}" 2>/dev/null; then
+			mihomo_pid="$(pgrep -P "${daemon_pid}" mihomo 2>/dev/null | head -n 1)"
+			if [ -n "${mihomo_pid}" ] && kill -0 "${mihomo_pid}" 2>/dev/null; then
+				echo "${name} is running: daemon pid ${daemon_pid}, mihomo pid ${mihomo_pid}."
+				return 0
+			fi
+			echo "${name} wrapper is running as pid ${daemon_pid}, but mihomo child process was not found."
+			return 1
+		fi
+		echo "${name} pid file exists but process is not running."
+		return 1
+	fi
+
+	mihomo_pid="$(pgrep -f "$(mihomo_cmd_pattern)" 2>/dev/null | head -n 1)"
+	if [ -n "${mihomo_pid}" ] && kill -0 "${mihomo_pid}" 2>/dev/null; then
+		echo "${name} process is running as pid ${mihomo_pid}, but pidfile is missing."
+		return 1
+	fi
+
+	echo "${name} is not running."
+	return 1
+}
+
+mihomo_restart()
+{
+	mihomo_restarting=1
+	mihomo_stop && "$0" start
+}
+
+mihomo_health()
+{
+	if [ -f "${stoppedfile}" ]; then
+		echo "${name} is administratively stopped; health check skipped."
+		return 0
+	fi
+
+	checkyesno mihomo_enable || {
+		echo "${name} is disabled; health check skipped."
+		return 0
+	}
+
+	if mihomo_status >/dev/null 2>&1; then
+		echo "${name} is healthy."
+		return 0
+	fi
+
+	echo "${name} is not running; attempting start."
+	logger -t mihomo "health check failed; starting service"
+	mihomo_restarting=1
+	mihomo_stop
+	"$0" start
+}
+
+run_rc_command "$1"

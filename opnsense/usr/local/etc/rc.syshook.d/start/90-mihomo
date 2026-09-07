@@ -1,0 +1,6 @@
+#!/bin/sh
+#
+# Start mihomo after OPNsense networking is up.
+# See https://docs.opnsense.org/development/backend/autorun.html
+
+exec /usr/local/etc/rc.d/mihomo start
