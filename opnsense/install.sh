@@ -31,24 +31,29 @@ restart_backend()
 	if command -v configctl >/dev/null 2>&1; then
 		configctl cron restart >/dev/null 2>&1 || true
 	fi
+	if command -v pluginctl >/dev/null 2>&1; then
+		pluginctl -s syslog restart >/dev/null 2>&1 || true
+	elif command -v configctl >/dev/null 2>&1; then
+		configctl template reload OPNsense/Syslog >/dev/null 2>&1 || true
+		configctl syslog restart >/dev/null 2>&1 || true
+	fi
 }
 
 case "${ACTION}" in
 install)
 	install_file "${BASEDIR}/etc/rc.conf.d/mihomo" /etc/rc.conf.d/mihomo 0644
 	install_file "${BASEDIR}/usr/local/etc/rc.d/mihomo" /usr/local/etc/rc.d/mihomo 0755
-	install_file "${BASEDIR}/usr/local/etc/newsyslog.conf.d/mihomo.conf" /usr/local/etc/newsyslog.conf.d/mihomo.conf 0644
 	install_file "${BASEDIR}/usr/local/etc/inc/plugins.inc.d/mihomo.inc" /usr/local/etc/inc/plugins.inc.d/mihomo.inc 0644
 	install_file "${BASEDIR}/usr/local/etc/rc.syshook.d/start/90-mihomo" /usr/local/etc/rc.syshook.d/start/90-mihomo 0755
 	install_file "${BASEDIR}/usr/local/opnsense/scripts/mihomo/health.sh" /usr/local/opnsense/scripts/mihomo/health.sh 0755
 	install_file "${BASEDIR}/usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf" /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf 0644
+	install_file "${BASEDIR}/usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf" /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf 0644
 
-	# Drop leftover file-based cron from older installs; use System → Settings → Cron instead.
+	# Drop leftovers from older installs.
 	rm -f /usr/local/etc/cron.d/mihomo
+	rm -f /usr/local/etc/newsyslog.conf.d/mihomo.conf
 
-	mkdir -p /usr/local/etc/mihomo
-	touch /var/log/mihomo.log
-	chmod 0640 /var/log/mihomo.log 2>/dev/null || true
+	mkdir -p /usr/local/etc/mihomo /var/log/mihomo
 
 	restart_backend
 	echo "Installed mihomo service. Start with: service mihomo start"
@@ -65,6 +70,7 @@ uninstall)
 	rm -f /usr/local/etc/rc.syshook.d/start/90-mihomo
 	rm -f /usr/local/opnsense/scripts/mihomo/health.sh
 	rm -f /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+	rm -f /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 	rm -f /var/run/mihomo.pid /var/run/mihomo.stopped /var/run/mihomo.health.lock
 
 	restart_backend

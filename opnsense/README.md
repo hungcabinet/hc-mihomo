@@ -2,9 +2,9 @@
 
 [English](#mihomo-on-opnsense) · [Русский](#mihomo-на-opnsense)
 
-A set of files so mihomo runs as a normal OPNsense service: start after the network is up, `start`/`stop` from the shell, logs, and cron-based restart if the process dies.
+A set of files so mihomo runs as a normal OPNsense service: start after the network is up, `start`/`stop` from the shell, syslog (web UI + system rotation), and cron-based restart if the process dies.
 
-There is no web UI. The config is YAML on disk. This repo does not install the binary — you have to place it yourself.
+There is no service web UI. The config is YAML on disk. This repo does not install the binary — you have to place it yourself. Logs go to syslog and show up under `System` → `Log Files`.
 
 ## Prerequisites on the firewall
 
@@ -53,12 +53,12 @@ The root of this folder (`opnsense/`) maps to the OPNsense filesystem root (`/`)
 | File in the repo | Destination on OPNsense | Mode | Purpose |
 |---|---|---|---|
 | `etc/rc.conf.d/mihomo` | `/etc/rc.conf.d/mihomo` | `0644` | Enables the service (`mihomo_enable="YES"`). Without it, `service mihomo start` will refuse to start. |
-| `usr/local/etc/rc.d/mihomo` | `/usr/local/etc/rc.d/mihomo` | `0755` | The rc script: start/stop/restart/status/health. |
+| `usr/local/etc/rc.d/mihomo` | `/usr/local/etc/rc.d/mihomo` | `0755` | The rc script: start/stop/restart/status/health. Child stdout/stderr go to syslog (`daemon -S -T mihomo`). |
 | `usr/local/etc/rc.syshook.d/start/90-mihomo` | `/usr/local/etc/rc.syshook.d/start/90-mihomo` | `0755` | Starts after the network is up (late OPNsense boot hook). |
-| `usr/local/etc/newsyslog.conf.d/mihomo.conf` | `/usr/local/etc/newsyslog.conf.d/mihomo.conf` | `0644` | Rotates `/var/log/mihomo.log` (5 copies, 1 MB threshold, bzip2). |
-| `usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `/usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `0644` | OPNsense registration: `pluginctl`, syslog, restart on WAN IP change. |
+| `usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `/usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `0644` | OPNsense registration: `pluginctl`, remote-syslog app name, restart on WAN IP change. |
 | `usr/local/opnsense/scripts/mihomo/health.sh` | `/usr/local/opnsense/scripts/mihomo/health.sh` | `0755` | Health-check script (`lockf` so two cron jobs cannot start the service at once). |
 | `usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf` | `/usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf` | `0644` | configd actions. The **Mihomo health check** command appears under `System` → `Settings` → `Cron`. |
+| `usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf` | `/usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf` | `0644` | syslog-ng filter: program `mihomo` → `/var/log/mihomo/`. Rotation follows `System` → `Settings` → `Logging`. |
 
 These files are **not** copied from this folder — they must exist separately:
 
@@ -66,7 +66,7 @@ These files are **not** copied from this folder — they must exist separately:
 |---|---|
 | `/usr/local/bin/mihomo` | binary |
 | `/usr/local/etc/mihomo/config.yaml` | config |
-| `/var/log/mihomo.log` | log (created on start or by `install.sh`) |
+| `/var/log/mihomo/` | syslog-ng destination (created on install / first message) |
 
 Directories to create if they are missing:
 
@@ -74,10 +74,10 @@ Directories to create if they are missing:
 /etc/rc.conf.d
 /usr/local/etc/rc.d
 /usr/local/etc/rc.syshook.d/start
-/usr/local/etc/newsyslog.conf.d
 /usr/local/etc/inc/plugins.inc.d
 /usr/local/opnsense/scripts/mihomo
 /usr/local/opnsense/service/conf/actions.d
+/usr/local/opnsense/service/templates/OPNsense/Syslog/local
 /usr/local/etc/mihomo
 ```
 
@@ -93,7 +93,7 @@ cd /tmp/opnsense
 sh ./install.sh
 ```
 
-It copies the service files, sets permissions, creates `/usr/local/etc/mihomo` and `/var/log/mihomo.log`, and restarts `configd`. It does **not** add the health check to crontab — you add that in the web UI (see below).
+It copies the service files, sets permissions, creates `/usr/local/etc/mihomo`, and restarts `configd` plus syslog so the mihomo log target appears. It does **not** add the health check to crontab — you add that in the web UI (see below). On upgrade it also removes a leftover `/usr/local/etc/newsyslog.conf.d/mihomo.conf`.
 
 The script does **not** install the binary or `config.yaml`. They must already be at:
 
@@ -125,11 +125,12 @@ mkdir -p \
   /etc/rc.conf.d \
   /usr/local/etc/rc.d \
   /usr/local/etc/rc.syshook.d/start \
-  /usr/local/etc/newsyslog.conf.d \
   /usr/local/etc/inc/plugins.inc.d \
   /usr/local/opnsense/scripts/mihomo \
   /usr/local/opnsense/service/conf/actions.d \
-  /usr/local/etc/mihomo
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local \
+  /usr/local/etc/mihomo \
+  /var/log/mihomo
 
 cp "${SRC}/etc/rc.conf.d/mihomo" \
   /etc/rc.conf.d/mihomo
@@ -137,35 +138,34 @@ cp "${SRC}/usr/local/etc/rc.d/mihomo" \
   /usr/local/etc/rc.d/mihomo
 cp "${SRC}/usr/local/etc/rc.syshook.d/start/90-mihomo" \
   /usr/local/etc/rc.syshook.d/start/90-mihomo
-cp "${SRC}/usr/local/etc/newsyslog.conf.d/mihomo.conf" \
-  /usr/local/etc/newsyslog.conf.d/mihomo.conf
 cp "${SRC}/usr/local/etc/inc/plugins.inc.d/mihomo.inc" \
   /usr/local/etc/inc/plugins.inc.d/mihomo.inc
 cp "${SRC}/usr/local/opnsense/scripts/mihomo/health.sh" \
   /usr/local/opnsense/scripts/mihomo/health.sh
 cp "${SRC}/usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf" \
   /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+cp "${SRC}/usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf" \
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 
 rm -f /usr/local/etc/cron.d/mihomo
+rm -f /usr/local/etc/newsyslog.conf.d/mihomo.conf
 
 chmod 0644 \
   /etc/rc.conf.d/mihomo \
-  /usr/local/etc/newsyslog.conf.d/mihomo.conf \
   /usr/local/etc/inc/plugins.inc.d/mihomo.inc \
-  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf \
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 
 chmod 0755 \
   /usr/local/etc/rc.d/mihomo \
   /usr/local/etc/rc.syshook.d/start/90-mihomo \
   /usr/local/opnsense/scripts/mihomo/health.sh
 
-touch /var/log/mihomo.log
-chmod 0640 /var/log/mihomo.log
-
 service configd restart
+pluginctl -s syslog restart
 ```
 
-After that, the **Mihomo health check** command appears in the GUI. You still have to add the cron job yourself — see the section below.
+After that, the **Mihomo health check** command appears in the GUI, and syslog-ng starts writing program `mihomo` to `/var/log/mihomo/`. You still have to add the cron job yourself — see the section below.
 
 ## After copy: first start
 
@@ -179,10 +179,11 @@ service mihomo status
 
 Expected status: `mihomo is running: daemon pid …, mihomo pid …`.
 
-Log:
+Log (GUI: `System` → `Log Files` → **mihomo**):
 
 ```sh
-tail -f /var/log/mihomo.log
+ls /var/log/mihomo
+tail -F /var/log/mihomo/mihomo_$(date +%Y%m%d).log
 ```
 
 Then:
@@ -247,6 +248,8 @@ grep mihomo /var/cron/tabs/root /usr/local/etc/cron.d/mihomo
 
 `install.sh` also deletes `/usr/local/etc/cron.d/mihomo` on a re-run. It does not touch the GUI cron job.
 
+**Logs.** Process output goes to syslog with tag `mihomo`, not to `/var/log/mihomo.log`. View in `System` → `Log Files` → **mihomo** (`/ui/diagnostics/log/core/mihomo`). Files live under `/var/log/mihomo/` (`mihomo_YYYYMMDD.log`). Size, keep days, and compression are the same as every other OPNsense log: `System` → `Settings` → `Logging`. After a manual install run `pluginctl -s syslog restart` so syslog-ng picks up the filter. An old `/var/log/mihomo.log` from earlier installs can be deleted.
+
 **TUN.** On start/stop the rc script reads `tun.device` from `config.yaml` and tears down a leftover interface. In `template.yaml` that is `utun0`.
 
 **Options** in `/etc/rc.conf.d/mihomo` (commented out by default):
@@ -267,13 +270,15 @@ ls -l \
   /etc/rc.conf.d/mihomo \
   /usr/local/etc/rc.d/mihomo \
   /usr/local/etc/rc.syshook.d/start/90-mihomo \
-  /usr/local/etc/newsyslog.conf.d/mihomo.conf \
   /usr/local/etc/inc/plugins.inc.d/mihomo.inc \
   /usr/local/opnsense/scripts/mihomo/health.sh \
-  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf \
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 
 pluginctl -s | grep mihomo
 ls /usr/local/etc/cron.d/mihomo 2>/dev/null || echo "no file cron (ok)"
+ls /usr/local/etc/newsyslog.conf.d/mihomo.conf 2>/dev/null || echo "no file newsyslog (ok)"
+ls /var/log/mihomo
 ```
 
 ## Uninstall
@@ -282,7 +287,7 @@ ls /usr/local/etc/cron.d/mihomo 2>/dev/null || echo "no file cron (ok)"
 sh ./install.sh uninstall
 ```
 
-or delete the same paths by hand and restart `configd`. Not removed: `/usr/local/bin/mihomo`, `/usr/local/etc/mihomo/`, `/var/log/mihomo.log`. Remove the **Mihomo health check** job under `System` → `Settings` → `Cron` separately if you added it.
+or delete the same paths by hand and restart `configd` plus syslog (`pluginctl -s syslog restart`). Not removed: `/usr/local/bin/mihomo`, `/usr/local/etc/mihomo/`, `/var/log/mihomo/`. Remove the **Mihomo health check** job under `System` → `Settings` → `Cron` separately if you added it.
 
 ## If it will not start
 
@@ -290,7 +295,8 @@ or delete the same paths by hand and restart `configd`. Not removed: `/usr/local
 |---|---|
 | `mihomo_enable is not set to YES` | `/etc/rc.conf.d/mihomo` |
 | `required file not found` | missing binary or missing `config.yaml` |
-| `configuration validation failed` | `mihomo -t …`, plus the tail of `/var/log/mihomo.log` |
+| `configuration validation failed` | `mihomo -t …`, plus `System` → `Log Files` → **mihomo** |
+| no mihomo page in Log Files | template `…/Syslog/local/mihomo.conf` is in place; `pluginctl -s syslog restart` |
 | `already running` | `pgrep -lf mihomo`, then `service mihomo stop` if needed |
 | hook does not start after reboot | `ls -l /usr/local/etc/rc.syshook.d/start/90-mihomo` — must be `0755` |
 | cron does not restart after a crash | **Mihomo health check** job in `System` → `Settings` → `Cron`; `service mihomo health`; no `/var/run/mihomo.stopped` |
@@ -303,9 +309,9 @@ or delete the same paths by hand and restart `configd`. Not removed: `/usr/local
 
 [English](#mihomo-on-opnsense) · [Русский](#mihomo-на-opnsense)
 
-Набор файлов, чтобы mihomo работал как обычный сервис OPNsense: старт после сети, `start`/`stop` из shell, логи и автоподъём через cron, если процесс упал.
+Набор файлов, чтобы mihomo работал как обычный сервис OPNsense: старт после сети, `start`/`stop` из shell, syslog (веб-интерфейс и системная ротация) и автоподъём через cron, если процесс упал.
 
-Веб-интерфейса нет. Конфиг — YAML на диске. Бинарь этот репозиторий не ставит: его нужно положить отдельно.
+Веб-интерфейса сервиса нет. Конфиг — YAML на диске. Бинарь этот репозиторий не ставит: его нужно положить отдельно. Логи идут в syslog и смотрятся в `System` → `Log Files`.
 
 ## Что должно уже быть на файрволе
 
@@ -354,12 +360,12 @@ or delete the same paths by hand and restart `configd`. Not removed: `/usr/local
 | Файл в репозитории | Куда на OPNsense | Режим | Зачем |
 |---|---|---|---|
 | `etc/rc.conf.d/mihomo` | `/etc/rc.conf.d/mihomo` | `0644` | Включает сервис (`mihomo_enable="YES"`). Без него `service mihomo start` откажется стартовать. |
-| `usr/local/etc/rc.d/mihomo` | `/usr/local/etc/rc.d/mihomo` | `0755` | Сам rc-скрипт: start/stop/restart/status/health. |
+| `usr/local/etc/rc.d/mihomo` | `/usr/local/etc/rc.d/mihomo` | `0755` | Сам rc-скрипт: start/stop/restart/status/health. stdout/stderr процесса идут в syslog (`daemon -S -T mihomo`). |
 | `usr/local/etc/rc.syshook.d/start/90-mihomo` | `/usr/local/etc/rc.syshook.d/start/90-mihomo` | `0755` | Старт после поднятия сети (поздний boot-хук OPNsense). |
-| `usr/local/etc/newsyslog.conf.d/mihomo.conf` | `/usr/local/etc/newsyslog.conf.d/mihomo.conf` | `0644` | Ротация `/var/log/mihomo.log` (5 копий, порог 1 МБ, bzip2). |
-| `usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `/usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `0644` | Регистрация в OPNsense: `pluginctl`, syslog, рестарт при смене WAN IP. |
+| `usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `/usr/local/etc/inc/plugins.inc.d/mihomo.inc` | `0644` | Регистрация в OPNsense: `pluginctl`, имя приложения для удалённого syslog, рестарт при смене WAN IP. |
 | `usr/local/opnsense/scripts/mihomo/health.sh` | `/usr/local/opnsense/scripts/mihomo/health.sh` | `0755` | Скрипт health check (с `lockf`, чтобы два крона не стартовали сервис одновременно). |
 | `usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf` | `/usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf` | `0644` | Действия configd. Команда **Mihomo health check** появляется в `System` → `Settings` → `Cron`. |
+| `usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf` | `/usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf` | `0644` | Фильтр syslog-ng: программа `mihomo` → `/var/log/mihomo/`. Ротация как у всех логов: `System` → `Settings` → `Logging`. |
 
 Эти файлы **не** копируются из этой папки — они должны существовать отдельно:
 
@@ -367,7 +373,7 @@ or delete the same paths by hand and restart `configd`. Not removed: `/usr/local
 |---|---|
 | `/usr/local/bin/mihomo` | бинарь |
 | `/usr/local/etc/mihomo/config.yaml` | конфиг |
-| `/var/log/mihomo.log` | лог (создастся сам при старте или `install.sh`) |
+| `/var/log/mihomo/` | каталог syslog-ng (создаётся при установке / первом сообщении) |
 
 Каталоги, которые нужно создать, если их нет:
 
@@ -375,10 +381,10 @@ or delete the same paths by hand and restart `configd`. Not removed: `/usr/local
 /etc/rc.conf.d
 /usr/local/etc/rc.d
 /usr/local/etc/rc.syshook.d/start
-/usr/local/etc/newsyslog.conf.d
 /usr/local/etc/inc/plugins.inc.d
 /usr/local/opnsense/scripts/mihomo
 /usr/local/opnsense/service/conf/actions.d
+/usr/local/opnsense/service/templates/OPNsense/Syslog/local
 /usr/local/etc/mihomo
 ```
 
@@ -394,7 +400,7 @@ cd /tmp/opnsense
 sh ./install.sh
 ```
 
-Он копирует служебные файлы, выставляет права, создаёт `/usr/local/etc/mihomo` и `/var/log/mihomo.log`, перезапускает `configd`. Health check в crontab сам не прописывает — его добавляют в веб-интерфейсе (см. ниже).
+Он копирует служебные файлы, выставляет права, создаёт `/usr/local/etc/mihomo`, перезапускает `configd` и syslog, чтобы появился лог mihomo. Health check в crontab сам не прописывает — его добавляют в веб-интерфейсе (см. ниже). При повторной установке ещё удаляет старый `/usr/local/etc/newsyslog.conf.d/mihomo.conf`.
 
 Бинарь и `config.yaml` скрипт **не** ставит. Они должны уже лежать:
 
@@ -426,11 +432,12 @@ mkdir -p \
   /etc/rc.conf.d \
   /usr/local/etc/rc.d \
   /usr/local/etc/rc.syshook.d/start \
-  /usr/local/etc/newsyslog.conf.d \
   /usr/local/etc/inc/plugins.inc.d \
   /usr/local/opnsense/scripts/mihomo \
   /usr/local/opnsense/service/conf/actions.d \
-  /usr/local/etc/mihomo
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local \
+  /usr/local/etc/mihomo \
+  /var/log/mihomo
 
 cp "${SRC}/etc/rc.conf.d/mihomo" \
   /etc/rc.conf.d/mihomo
@@ -438,35 +445,34 @@ cp "${SRC}/usr/local/etc/rc.d/mihomo" \
   /usr/local/etc/rc.d/mihomo
 cp "${SRC}/usr/local/etc/rc.syshook.d/start/90-mihomo" \
   /usr/local/etc/rc.syshook.d/start/90-mihomo
-cp "${SRC}/usr/local/etc/newsyslog.conf.d/mihomo.conf" \
-  /usr/local/etc/newsyslog.conf.d/mihomo.conf
 cp "${SRC}/usr/local/etc/inc/plugins.inc.d/mihomo.inc" \
   /usr/local/etc/inc/plugins.inc.d/mihomo.inc
 cp "${SRC}/usr/local/opnsense/scripts/mihomo/health.sh" \
   /usr/local/opnsense/scripts/mihomo/health.sh
 cp "${SRC}/usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf" \
   /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+cp "${SRC}/usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf" \
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 
 rm -f /usr/local/etc/cron.d/mihomo
+rm -f /usr/local/etc/newsyslog.conf.d/mihomo.conf
 
 chmod 0644 \
   /etc/rc.conf.d/mihomo \
-  /usr/local/etc/newsyslog.conf.d/mihomo.conf \
   /usr/local/etc/inc/plugins.inc.d/mihomo.inc \
-  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf \
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 
 chmod 0755 \
   /usr/local/etc/rc.d/mihomo \
   /usr/local/etc/rc.syshook.d/start/90-mihomo \
   /usr/local/opnsense/scripts/mihomo/health.sh
 
-touch /var/log/mihomo.log
-chmod 0640 /var/log/mihomo.log
-
 service configd restart
+pluginctl -s syslog restart
 ```
 
-После этого в GUI появится команда **Mihomo health check**. Саму задачу cron нужно добавить вручную — см. раздел ниже.
+После этого в GUI появится команда **Mihomo health check**, а syslog-ng начнёт писать программу `mihomo` в `/var/log/mihomo/`. Саму задачу cron нужно добавить вручную — см. раздел ниже.
 
 ## После копирования: первый запуск
 
@@ -480,10 +486,11 @@ service mihomo status
 
 Ожидаемый status: `mihomo is running: daemon pid …, mihomo pid …`.
 
-Лог:
+Лог (GUI: `System` → `Log Files` → **mihomo**):
 
 ```sh
-tail -f /var/log/mihomo.log
+ls /var/log/mihomo
+tail -F /var/log/mihomo/mihomo_$(date +%Y%m%d).log
 ```
 
 Дальше:
@@ -548,6 +555,8 @@ grep mihomo /var/cron/tabs/root /usr/local/etc/cron.d/mihomo
 
 `install.sh` при повторном запуске тоже удаляет `/usr/local/etc/cron.d/mihomo`. Задачу из GUI это не трогает.
 
+**Логи.** Вывод процесса идёт в syslog с тегом `mihomo`, не в `/var/log/mihomo.log`. Смотреть: `System` → `Log Files` → **mihomo** (`/ui/diagnostics/log/core/mihomo`). Файлы лежат в `/var/log/mihomo/` (`mihomo_YYYYMMDD.log`). Размер, срок хранения и сжатие — как у остальных логов OPNsense: `System` → `Settings` → `Logging`. После ручной установки нужен `pluginctl -s syslog restart`, чтобы syslog-ng подхватил фильтр. Старый `/var/log/mihomo.log` от прошлых установок можно удалить.
+
 **TUN.** При старте/стопе rc-скрипт читает `tun.device` из `config.yaml` и сносит зависший интерфейс. В `template.yaml` это `utun0`.
 
 **Опции** в `/etc/rc.conf.d/mihomo` (по умолчанию закомментированы):
@@ -568,13 +577,15 @@ ls -l \
   /etc/rc.conf.d/mihomo \
   /usr/local/etc/rc.d/mihomo \
   /usr/local/etc/rc.syshook.d/start/90-mihomo \
-  /usr/local/etc/newsyslog.conf.d/mihomo.conf \
   /usr/local/etc/inc/plugins.inc.d/mihomo.inc \
   /usr/local/opnsense/scripts/mihomo/health.sh \
-  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf
+  /usr/local/opnsense/service/conf/actions.d/actions_mihomo.conf \
+  /usr/local/opnsense/service/templates/OPNsense/Syslog/local/mihomo.conf
 
 pluginctl -s | grep mihomo
 ls /usr/local/etc/cron.d/mihomo 2>/dev/null || echo "no file cron (ok)"
+ls /usr/local/etc/newsyslog.conf.d/mihomo.conf 2>/dev/null || echo "no file newsyslog (ok)"
+ls /var/log/mihomo
 ```
 
 ## Снятие
@@ -583,7 +594,7 @@ ls /usr/local/etc/cron.d/mihomo 2>/dev/null || echo "no file cron (ok)"
 sh ./install.sh uninstall
 ```
 
-или удалить те же пути вручную и перезапустить `configd`. Не удаляются: `/usr/local/bin/mihomo`, `/usr/local/etc/mihomo/`, `/var/log/mihomo.log`. Задачу **Mihomo health check** в `System` → `Settings` → `Cron` сними отдельно, если добавлял.
+или удалить те же пути вручную и перезапустить `configd` и syslog (`pluginctl -s syslog restart`). Не удаляются: `/usr/local/bin/mihomo`, `/usr/local/etc/mihomo/`, `/var/log/mihomo/`. Задачу **Mihomo health check** в `System` → `Settings` → `Cron` сними отдельно, если добавлял.
 
 ## Если не стартует
 
@@ -591,7 +602,8 @@ sh ./install.sh uninstall
 |---|---|
 | `mihomo_enable is not set to YES` | `/etc/rc.conf.d/mihomo` |
 | `required file not found` | нет бинаря или нет `config.yaml` |
-| `configuration validation failed` | `mihomo -t …`, плюс хвост `/var/log/mihomo.log` |
+| `configuration validation failed` | `mihomo -t …`, плюс `System` → `Log Files` → **mihomo** |
+| в Log Files нет страницы mihomo | на месте шаблон `…/Syslog/local/mihomo.conf`; `pluginctl -s syslog restart` |
 | `already running` | `pgrep -lf mihomo`, при необходимости `service mihomo stop` |
 | хук не стартует после ребута | `ls -l /usr/local/etc/rc.syshook.d/start/90-mihomo` — должен быть `0755` |
 | cron не поднимает после падения | задача **Mihomo health check** в `System` → `Settings` → `Cron`; `service mihomo health`; нет ли `/var/run/mihomo.stopped` |

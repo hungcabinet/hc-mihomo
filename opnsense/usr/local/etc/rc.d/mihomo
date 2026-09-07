@@ -11,7 +11,6 @@ rcvar="mihomo_enable"
 desc="mihomo service"
 
 pidfile="/var/run/${name}.pid"
-logfile="/var/log/${name}.log"
 stoppedfile="/var/run/${name}.stopped"
 procname="/usr/local/bin/mihomo"
 command="/usr/sbin/daemon"
@@ -32,7 +31,7 @@ load_rc_config "${name}"
 : ${mihomo_flags:=""}
 
 required_files="${procname} ${mihomo_config}"
-command_args="-P ${pidfile} -f -o ${logfile} -t ${name}:daemon ${procname} -d ${mihomo_dir} -f ${mihomo_config} ${mihomo_flags}"
+command_args="-P ${pidfile} -f -S -T ${name} -t ${name}:daemon ${procname} -d ${mihomo_dir} -f ${mihomo_config} ${mihomo_flags}"
 
 mihomo_cmd_pattern()
 {
@@ -72,11 +71,15 @@ mihomo_destroy_tun()
 
 mihomo_prestart()
 {
-	touch "${logfile}"
 	rm -f "${stoppedfile}"
 
-	if ! "${procname}" -t -d "${mihomo_dir}" -f "${mihomo_config}" >> "${logfile}" 2>&1; then
+	if ! valid_out="$("${procname}" -t -d "${mihomo_dir}" -f "${mihomo_config}" 2>&1)"; then
 		echo "Mihomo configuration validation failed."
+		if [ -n "${valid_out}" ]; then
+			echo "${valid_out}"
+			printf '%s\n' "${valid_out}" | logger -t "${name}"
+		fi
+		logger -t "${name}" "configuration validation failed"
 		return 1
 	fi
 
