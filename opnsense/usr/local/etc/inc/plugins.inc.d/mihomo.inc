@@ -25,17 +25,15 @@ function mihomo_configure()
     ];
 }
 
-function mihomo_configure_do($verbose = false)
+function mihomo_configure_do($verbose = false, $interfaces = null)
 {
     if (file_exists('/var/run/mihomo.stopped')) {
         return;
     }
 
-    if ($verbose) {
-        echo 'Restarting mihomo...';
-    }
-
-    mwexec('/usr/local/etc/rc.d/mihomo restart');
+    service_log('Restarting mihomo...', $verbose);
+    mwexecf('%s restart', '/usr/local/etc/rc.d/mihomo');
+    service_log("done.\n", $verbose);
 }
 
 function mihomo_syslog()
