@@ -221,16 +221,19 @@ jobs:
       - name: List release files
         run: ls -lah publish
 
-      - name: Delete existing release for this tag
+      - name: Delete existing release and tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ needs.check.outputs.VERSION }}"
           if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Deleting existing release ${TAG} so it can be replaced"
-            gh release delete "${TAG}" --repo "${{ github.repository }}" --yes
+            echo "Deleting existing release+tag ${TAG}"
+            gh release delete "${TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag
+          elif git ls-remote --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${TAG}" | grep -q .; then
+            echo "Deleting leftover tag ${TAG}"
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${TAG}"
           else
-            echo "No existing release for ${TAG}"
+            echo "No existing release/tag for ${TAG}"
           fi
 
       - name: Create GitHub release
@@ -238,6 +241,7 @@ jobs:
         with:
           name: ${{ needs.check.outputs.VERSION }}
           tag_name: v${{ needs.check.outputs.VERSION }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
           make_latest: true
