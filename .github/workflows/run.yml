@@ -205,7 +205,19 @@ jobs:
       - name: List release files
         run: ls -lah publish
 
-      - name: Create or update GitHub release
+      - name: Delete existing release for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.build.outputs.VERSION }}"
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Deleting existing release ${TAG} so it can be recreated as latest"
+            gh release delete "${TAG}" --repo "${{ github.repository }}" --yes
+          else
+            echo "No existing release for ${TAG}"
+          fi
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           name: ${{ needs.build.outputs.VERSION }}
