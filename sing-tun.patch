@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 3efdba9..7263095 100644
+index 3efdba99..72630954 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -7,6 +7,7 @@ build:
@@ -11,7 +11,7 @@ index 3efdba9..7263095 100644
  fmt:
  	@gofumpt -l -w .
 diff --git a/README.md b/README.md
-index 6a8a9c0..5ecb5c0 100644
+index 6a8a9c08..5ecb5c0e 100644
 --- a/README.md
 +++ b/README.md
 @@ -2,7 +2,7 @@
@@ -24,7 +24,7 @@ index 6a8a9c0..5ecb5c0 100644
  ## License
  
 diff --git a/monitor_other.go b/monitor_other.go
-index 40a936e..f4e0b33 100644
+index 40a936e9..f4e0b330 100644
 --- a/monitor_other.go
 +++ b/monitor_other.go
 @@ -1,4 +1,4 @@
@@ -34,7 +34,7 @@ index 40a936e..f4e0b33 100644
  package tun
  
 diff --git a/monitor_shared.go b/monitor_shared.go
-index c2b4254..004700c 100644
+index c2b4254a..004700c9 100644
 --- a/monitor_shared.go
 +++ b/monitor_shared.go
 @@ -1,4 +1,4 @@
@@ -44,7 +44,7 @@ index c2b4254..004700c 100644
  package tun
  
 diff --git a/tun.go b/tun.go
-index c4ba540..8750388 100644
+index c4ba540c..87503887 100644
 --- a/tun.go
 +++ b/tun.go
 @@ -69,6 +69,7 @@ const (
@@ -82,7 +82,7 @@ index c4ba540..8750388 100644
  		default:
  			if HasNextAddress(o.Inet6Address[0], 1) {
 diff --git a/tun_darwin.go b/tun_darwin.go
-index 21b5db6..8ef7a7f 100644
+index 21b5db61..8ef7a7fc 100644
 --- a/tun_darwin.go
 +++ b/tun_darwin.go
 @@ -9,8 +9,8 @@ import (
@@ -98,10 +98,10 @@ index 21b5db6..8ef7a7f 100644
  	E "github.com/metacubex/sing/common/exceptions"
 diff --git a/tun_freebsd.go b/tun_freebsd.go
 new file mode 100644
-index 0000000..08cbc9e
+index 00000000..03d150dc
 --- /dev/null
 +++ b/tun_freebsd.go
-@@ -0,0 +1,752 @@
+@@ -0,0 +1,830 @@
 +/* SPDX-License-Identifier: MIT
 + *
 + * Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.
@@ -111,13 +111,16 @@ index 0000000..08cbc9e
 +package tun
 +
 +import (
++	"context"
 +	"fmt"
 +	"net"
 +	"net/netip"
 +	"os"
 +	"os/exec"
 +	"strings"
++	"sync"
 +	"syscall"
++	"time"
 +	"unsafe"
 +
 +	"github.com/metacubex/sing-tun/internal/gtcpip/header"
@@ -140,13 +143,19 @@ index 0000000..08cbc9e
 +	tunFile      *os.File
 +	tunWriter    N.VectorisedWriter
 +	options      Options
++	name         string
 +	resolv       string
 +	inet4Address [4]byte
 +	inet6Address [16]byte
 +	routeSet     bool
++	closeOnce    sync.Once
++	closeErr     error
 +}
 +
 +func (t *NativeTun) Name() (string, error) {
++	if t.name != "" {
++		return t.name, nil
++	}
 +	return getTunName(t.tunFile)
 +}
 +
@@ -170,31 +179,39 @@ index 0000000..08cbc9e
 +
 +		assignedName, err := getTunName(tunFile)
 +		if err != nil {
-+			return nil, E.Errors(err, tunFile.Close(), destoryTun("tun"))
++			return nil, E.Errors(err, tunFile.Close(), destroyTun("tun"))
 +		}
 +
++		ifName := assignedName
 +		err = E.Errors(
 +			setIfHeadMode(tunFile), setIfMode(tunFile),
 +			setND6(assignedName), setPID(tunFile),
 +			setMTU(assignedName, int32(options.MTU)),
-+			setTunName(options.Name, assignedName),
 +		)
 +		if err != nil {
-+			return nil, E.Errors(err, tunFile.Close(), destoryTun(assignedName))
++			return nil, E.Errors(err, tunFile.Close(), destroyTun(assignedName))
++		}
++
++		if options.Name != "" && options.Name != assignedName {
++			err = setTunName(options.Name, assignedName)
++			if err != nil {
++				return nil, E.Errors(err, tunFile.Close(), destroyTun(assignedName))
++			}
++			ifName = options.Name
 +		}
 +
 +		err = E.Errors(
 +			setGateway(tunFile, options),
-+			setTunAddress(options.Name, options),
++			setTunAddress(ifName, options),
 +		)
 +		if err != nil {
-+			return nil, E.Errors(err, tunFile.Close(), destoryTun(options.Name))
++			return nil, E.Errors(err, tunFile.Close(), destroyTun(ifName))
 +		}
 +
 +		if options.AutoRoute {
 +			err = setRoutes(options)
 +			if err != nil {
-+				return nil, E.Errors(err, tunFile.Close(), destoryTun(options.Name))
++				return nil, E.Errors(err, tunFile.Close(), destroyTun(ifName))
 +			}
 +		}
 +
@@ -202,13 +219,14 @@ index 0000000..08cbc9e
 +		if options.AutoRoute && !options.EXP_DisableDNSHijack {
 +			resolvString, err = setDNSServers(options)
 +			if err != nil {
-+				return nil, E.Errors(err, tunFile.Close(), destoryTun(options.Name))
++				return nil, E.Errors(err, tunFile.Close(), destroyTun(ifName))
 +			}
 +		}
 +
 +		nativeTun = &NativeTun{
 +			tunFile: tunFile,
 +			options: options,
++			name:    ifName,
 +			resolv:  resolvString,
 +		}
 +	} else {
@@ -216,6 +234,10 @@ index 0000000..08cbc9e
 +		nativeTun = &NativeTun{
 +			tunFile: os.NewFile(uintptr(tunFd), "utun"),
 +			options: options,
++			name:    options.Name,
++		}
++		if name, err := getTunName(nativeTun.tunFile); err == nil {
++			nativeTun.name = name
 +		}
 +	}
 +
@@ -253,13 +275,36 @@ index 0000000..08cbc9e
 +	packetHeader6 = [4]byte{0x00, 0x00, 0x00, unix.AF_INET6}
 +)
 +
-+func (t *NativeTun) Close() error {
-+	if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
-+		return E.Errors(
-+			restoreDNSServers(t.resolv), t.tunFile.Close(), destoryTun(t.options.Name),
-+		)
++func ifaceExists(name string) bool {
++	if name == "" {
++		return false
 +	}
-+	return E.Errors(t.tunFile.Close(), destoryTun(t.options.Name))
++	iface, err := net.InterfaceByName(name)
++	return err == nil && iface != nil
++}
++
++func (t *NativeTun) Close() error {
++	t.closeOnce.Do(func() {
++		name := t.name
++		if name == "" {
++			name = t.options.Name
++		}
++
++		var errs error
++		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
++			errs = E.Errors(errs, restoreDNSServers(t.resolv))
++		}
++
++		// Close fd first so stack tunLoop Read() unblocks. Destroying the
++		// iface while Read is blocked deadlocks ifconfig/SIOCIFDESTROY.
++		if t.tunFile != nil {
++			errs = E.Errors(errs, t.tunFile.Close())
++			t.tunFile = nil
++		}
++		errs = E.Errors(errs, destroyTun(name))
++		t.closeErr = errs
++	})
++	return t.closeErr
 +}
 +
 +func (t *NativeTun) WriteVectorised(buffers []*buf.Buffer) error {
@@ -318,7 +363,6 @@ index 0000000..08cbc9e
 +	Addr    unix.RawSockaddrInet4
 +	Dstaddr unix.RawSockaddrInet4
 +	Mask    unix.RawSockaddrInet4
-+	Vhid    uint32
 +}
 +
 +type ifAliasReq6 struct {
@@ -358,25 +402,49 @@ index 0000000..08cbc9e
 +	return unix.ByteSliceToString(ifr.Name[:]), nil
 +}
 +
-+func destoryTun(name string) error {
-+	err := useSocket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0, func(socketFd int) error {
-+		var ifr Ifreq
-+		copy(ifr.Name[:], name)
++func destroyTun(name string) error {
++	if name == "" {
++		return nil
++	}
++	if !ifaceExists(name) {
++		return nil
++	}
++
++	// FreeBSD struct ifreq is 32 bytes. A too-short buffer makes
++	// SIOCIFDESTROY fail because the kernel copyin reads sizeof(ifreq).
++	ioctlErr := useSocket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0, func(socketFd int) error {
++		var ifr [32]byte
++		copy(ifr[:], name)
 +		_, _, errno := unix.Syscall(
 +			syscall.SYS_IOCTL,
 +			uintptr(socketFd),
 +			uintptr(unix.SIOCIFDESTROY),
-+			uintptr(unsafe.Pointer(&ifr)),
++			uintptr(unsafe.Pointer(&ifr[0])),
 +		)
 +		if errno != 0 {
-+			return E.New(errno.Error())
++			return errno
 +		}
 +		return nil
 +	})
-+	if err != nil {
-+		return os.NewSyscallError("SIOCIFDESTROY", err)
++	if ioctlErr == nil && !ifaceExists(name) {
++		return nil
 +	}
-+	return nil
++
++	if fallbackErr := runCommand(fmt.Sprintf("/sbin/ifconfig %s destroy", name)); fallbackErr == nil {
++		return nil
++	}
++	if !ifaceExists(name) {
++		return nil
++	}
++	if ioctlErr != nil {
++		return os.NewSyscallError("SIOCIFDESTROY", ioctlErr)
++	}
++	return E.New("failed to destroy tun interface: ", name)
++}
++
++// destoryTun keeps the historical misspelling used by older call sites/patches.
++func destoryTun(name string) error {
++	return destroyTun(name)
 +}
 +
 +func setFIB(tunFile *os.File, fib int) error {
@@ -645,9 +713,27 @@ index 0000000..08cbc9e
 +	return nil
 +}
 +
++func ipv4Broadcast(prefix netip.Prefix) [4]byte {
++	addr := prefix.Addr().As4()
++	mask := net.CIDRMask(prefix.Bits(), 32)
++	var broadcast [4]byte
++	for i := 0; i < 4; i++ {
++		broadcast[i] = addr[i] | ^mask[i]
++	}
++	return broadcast
++}
++
 +func setTunAddress(name string, options Options) error {
-+	if len(options.Inet4Address) > 0 {
-+		for _, address := range options.Inet4Address {
++	// Prefer ifconfig on FreeBSD/OPNsense: ioctl layouts differ across releases and
++	// listeners often only configure addresses (no auto-route), so this must work.
++	for i, address := range options.Inet4Address {
++		alias := ""
++		if i > 0 {
++			alias = " alias"
++		}
++		err := runCommand(fmt.Sprintf("/sbin/ifconfig %s inet %s%s", name, address.String(), alias))
++		if err != nil {
++			// Fallback to SIOCAIFADDR with a proper broadcast address.
 +			ifReq := ifAliasReq{
 +				Addr: unix.RawSockaddrInet4{
 +					Len:    unix.SizeofSockaddrInet4,
@@ -657,7 +743,7 @@ index 0000000..08cbc9e
 +				Dstaddr: unix.RawSockaddrInet4{
 +					Len:    unix.SizeofSockaddrInet4,
 +					Family: unix.AF_INET,
-+					Addr:   address.Addr().As4(),
++					Addr:   ipv4Broadcast(address),
 +				},
 +				Mask: unix.RawSockaddrInet4{
 +					Len:    unix.SizeofSockaddrInet4,
@@ -666,7 +752,7 @@ index 0000000..08cbc9e
 +				},
 +			}
 +			copy(ifReq.Name[:], name)
-+			err := useSocket(unix.AF_INET, unix.SOCK_DGRAM, 0, func(socketFd int) error {
++			ioctlErr := useSocket(unix.AF_INET, unix.SOCK_DGRAM, 0, func(socketFd int) error {
 +				if _, _, errno := unix.Syscall(
 +					syscall.SYS_IOCTL,
 +					uintptr(socketFd),
@@ -677,13 +763,18 @@ index 0000000..08cbc9e
 +				}
 +				return nil
 +			})
-+			if err != nil {
-+				return err
++			if ioctlErr != nil {
++				return E.Errors(err, ioctlErr)
 +			}
 +		}
 +	}
-+	if len(options.Inet6Address) > 0 {
-+		for _, address := range options.Inet6Address {
++	for i, address := range options.Inet6Address {
++		alias := ""
++		if i > 0 {
++			alias = " alias"
++		}
++		err := runCommand(fmt.Sprintf("/sbin/ifconfig %s inet6 %s%s", name, address.String(), alias))
++		if err != nil {
 +			ifReq6 := ifAliasReq6{
 +				Addr: unix.RawSockaddrInet6{
 +					Len:    unix.SizeofSockaddrInet6,
@@ -709,7 +800,7 @@ index 0000000..08cbc9e
 +				}
 +			}
 +			copy(ifReq6.Name[:], name)
-+			err := useSocket(unix.AF_INET6, unix.SOCK_DGRAM, 0, func(socketFd int) error {
++			ioctlErr := useSocket(unix.AF_INET6, unix.SOCK_DGRAM, 0, func(socketFd int) error {
 +				if _, _, errno := unix.Syscall(
 +					syscall.SYS_IOCTL,
 +					uintptr(socketFd),
@@ -720,25 +811,12 @@ index 0000000..08cbc9e
 +				}
 +				return nil
 +			})
-+			if err != nil {
-+				return err
++			if ioctlErr != nil {
++				return E.Errors(err, ioctlErr)
 +			}
 +		}
 +	}
-+	return nil
-+	/*if len(options.Inet4Address) > 0 {
-+		err := runCommand(fmt.Sprintf("/sbin/ifconfig %s inet %s up", name, options.Inet4Address[0].String()))
-+		if err != nil {
-+			return err
-+		}
-+	}
-+	if len(options.Inet6Address) > 0 {
-+		err := runCommand(fmt.Sprintf("/sbin/ifconfig %s inet6 %s up", name, options.Inet6Address[0].String()))
-+		if err != nil {
-+			return err
-+		}
-+	}
-+	return nil*/
++	return runCommand(fmt.Sprintf("/sbin/ifconfig %s up", name))
 +}
 +
 +func setRoutes(options Options) error {
@@ -795,12 +873,12 @@ index 0000000..08cbc9e
 +}
 +
 +func runCommand(commandStr string) error {
-+	var command *exec.Cmd
-+	command = exec.Command(
-+		"/bin/sh", "-c", commandStr)
++	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++	defer cancel()
++	command := exec.CommandContext(ctx, "/bin/sh", "-c", commandStr)
 +	combinedOutput, err := command.CombinedOutput()
 +	if err != nil {
-+		return E.New(commandStr, ": ", string(combinedOutput))
++		return E.New(commandStr, ": ", string(combinedOutput), err.Error())
 +	}
 +	return nil
 +}
@@ -856,7 +934,7 @@ index 0000000..08cbc9e
 +}
 diff --git a/tun_freebsd_gvisor.go b/tun_freebsd_gvisor.go
 new file mode 100644
-index 0000000..8cda7a0
+index 00000000..8cda7a02
 --- /dev/null
 +++ b/tun_freebsd_gvisor.go
 @@ -0,0 +1,138 @@
@@ -999,7 +1077,7 @@ index 0000000..8cda7a0
 +func (e *FreeBSDEndpoint) SetOnCloseAction(f func()) {
 +}
 diff --git a/tun_nondarwin.go b/tun_nondarwin.go
-index 0faa2c9..053b931 100644
+index 0faa2c9e..053b931d 100644
 --- a/tun_nondarwin.go
 +++ b/tun_nondarwin.go
 @@ -1,4 +1,4 @@
@@ -1009,7 +1087,7 @@ index 0faa2c9..053b931 100644
  package tun
  
 diff --git a/tun_other.go b/tun_other.go
-index 1db48f9..432d26b 100644
+index 1db48f93..432d26bf 100644
 --- a/tun_other.go
 +++ b/tun_other.go
 @@ -1,4 +1,4 @@
@@ -1019,7 +1097,7 @@ index 1db48f9..432d26b 100644
  package tun
  
 diff --git a/tun_rules.go b/tun_rules.go
-index 7adc948..5487fdb 100644
+index 7adc9484..5487fdb8 100644
 --- a/tun_rules.go
 +++ b/tun_rules.go
 @@ -101,7 +101,7 @@ func buildExcludedRanges(includeRanges []ranges.Range[uint32], excludeRanges []r

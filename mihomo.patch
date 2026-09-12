@@ -2,7 +2,7 @@ diff --git a/component/process/process_freebsd_amd64.go b/component/process/proc
 similarity index 90%
 rename from component/process/process_freebsd_amd64.go
 rename to component/process/process_freebsd.go
-index a6d00c8..21094aa 100644
+index a6d00c8e..21094aac 100644
 --- a/component/process/process_freebsd_amd64.go
 +++ b/component/process/process_freebsd.go
 @@ -177,23 +177,22 @@ func (s *searcher) searchSocketPid(socket uint64) (uint32, error) {
@@ -76,7 +76,7 @@ index a6d00c8..21094aa 100644
  	return nil
  }
 diff --git a/component/process/process_other.go b/component/process/process_other.go
-index eea6e5f..83b6f08 100644
+index eea6e5fd..83b6f085 100644
 --- a/component/process/process_other.go
 +++ b/component/process/process_other.go
 @@ -1,4 +1,4 @@
@@ -86,7 +86,7 @@ index eea6e5f..83b6f08 100644
  package process
  
 diff --git a/listener/config/tun.go b/listener/config/tun.go
-index 9a7a119..ce6d07d 100644
+index 9a7a119d..ce6d07dc 100644
 --- a/listener/config/tun.go
 +++ b/listener/config/tun.go
 @@ -24,6 +24,7 @@ type Tun struct {
@@ -108,7 +108,7 @@ index 9a7a119..ce6d07d 100644
  		return false
  	}
 diff --git a/listener/listener.go b/listener/listener.go
-index 3a0a8aa..1e377bf 100644
+index 3a0a8aad..7bdfc1b7 100644
 --- a/listener/listener.go
 +++ b/listener/listener.go
 @@ -3,6 +3,7 @@ package listener
@@ -134,8 +134,20 @@ index 3a0a8aa..1e377bf 100644
  	}
  
  	log.Infoln("Redirect proxy listening at: %s", redirListener.Address())
+@@ -726,4 +729,11 @@ func closeTunListener() {
+ 
+ func Cleanup() {
+ 	closeTunListener()
++
++	inboundMux.Lock()
++	defer inboundMux.Unlock()
++	for name, l := range inboundListeners {
++		_ = l.Close()
++		delete(inboundListeners, name)
++	}
+ }
 diff --git a/listener/redir/tcp_freebsd.go b/listener/redir/tcp_freebsd.go
-index 9eb199f..0a3199a 100644
+index 9eb199f0..0a3199a3 100644
 --- a/listener/redir/tcp_freebsd.go
 +++ b/listener/redir/tcp_freebsd.go
 @@ -5,62 +5,87 @@ import (
@@ -264,10 +276,25 @@ index 9eb199f..0a3199a 100644
 +	return socks5.AddrFromStdAddrPort(netip.AddrPortFrom(addr, port)), nil
  }
 diff --git a/listener/sing_tun/server.go b/listener/sing_tun/server.go
-index 3e5ef59..cc93cf0 100644
+index 3e5ef591..d4ba81bc 100644
 --- a/listener/sing_tun/server.go
 +++ b/listener/sing_tun/server.go
-@@ -213,6 +213,10 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
+@@ -80,6 +80,14 @@ var emptyAddressSet = []*netipx.IPSet{{}}
+ func CalculateInterfaceName(name string) (tunName string) {
+ 	if runtime.GOOS == "darwin" {
+ 		tunName = "utun"
++	} else if runtime.GOOS == "freebsd" {
++		// FreeBSD opens /dev/tun then renames; allocate Meta0/Meta1/... so
++		// several TUN listeners (and leftover interfaces) do not collide.
++		if name != "" {
++			tunName = name
++		} else {
++			tunName = "tun"
++		}
+ 	} else if name != "" {
+ 		tunName = name
+ 		return
+@@ -213,6 +221,10 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
  	if ruleIndex == 0 {
  		ruleIndex = tun.DefaultIPRoute2RuleIndex
  	}
@@ -278,7 +305,7 @@ index 3e5ef59..cc93cf0 100644
  	autoRedirectFallbackRuleIndex := options.AutoRedirectIPRoute2FallbackRuleIndex
  	if autoRedirectFallbackRuleIndex == 0 {
  		autoRedirectFallbackRuleIndex = tun.DefaultIPRoute2AutoRedirectFallbackRuleIndex
-@@ -394,6 +398,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
+@@ -394,6 +406,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
  		IPRoute2TableIndex:                    tableIndex,
  		IPRoute2RuleIndex:                     ruleIndex,
  		IPRoute2AutoRedirectFallbackRuleIndex: autoRedirectFallbackRuleIndex,
