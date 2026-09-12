@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Force build even if this mihomo version was already built
+        description: Force rebuild and replace the existing GitHub release for this version
         type: boolean
         default: false
   schedule:
@@ -30,8 +30,81 @@ jobs:
           retain_days: 3
           keep_minimum_runs: 6
 
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      NEW: ${{ steps.decide.outputs.NEW }}
+      BUILD: ${{ steps.decide.outputs.BUILD }}
+      VERSION: ${{ steps.decide.outputs.VERSION }}
+    steps:
+      - name: Checkout the "hidden" branch
+        uses: actions/checkout@v6
+        with:
+          ref: hidden
+
+      - name: Resolve upstream version and decide whether to build
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          RESPONSE=$(curl -sSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
+          VERSION=$(printf '%s' "${RESPONSE}" | jq -r '.tag_name // empty' | sed 's|^v||')
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "Failed to resolve latest mihomo release tag"
+            printf '%s\n' "${RESPONSE}" | head -c 2000
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          FORCE=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            FORCE=true
+          fi
+
+          RELEASE_EXISTS=false
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          fi
+
+          if [ -f last_version ]; then
+            LAST_VERSION=$(cat last_version)
+          else
+            LAST_VERSION="none"
+          fi
+
+          echo "upstream=${VERSION} tag=${TAG} last_version=${LAST_VERSION} release_exists=${RELEASE_EXISTS} force=${FORCE} event=${{ github.event_name }}"
+
+          NEW=false
+          BUILD=false
+          if [ "${RELEASE_EXISTS}" = "true" ]; then
+            if [ "${FORCE}" = "true" ]; then
+              echo "Release ${TAG} already exists; force=true -> rebuild and replace"
+              BUILD=true
+            else
+              echo "Release ${TAG} already exists and force is not set -> stop at version check"
+              BUILD=false
+            fi
+          else
+            echo "No GitHub release for ${TAG} -> build new release"
+            NEW=true
+            BUILD=true
+          fi
+
+          echo "NEW=${NEW}" >> "$GITHUB_OUTPUT"
+          echo "BUILD=${BUILD}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Decision: BUILD=${BUILD} NEW=${NEW}"
+
   build:
     runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.BUILD == 'true'
     strategy:
       matrix:
         include:
@@ -41,74 +114,21 @@ jobs:
           - { goos: freebsd, goarch: arm, goarm: 6 }
           - { goos: freebsd, goarch: arm, goarm: 7 }
           - { goos: freebsd, goarch: arm64 }
-    outputs:
-      NEW: ${{ steps.check.outputs.NEW }}
-      BUILD: ${{ steps.check.outputs.BUILD }}
-      VERSION: ${{ steps.check.outputs.VERSION }}
-
+    env:
+      VERSION: ${{ needs.check.outputs.VERSION }}
+      RELEASE_NAME: ${{ needs.check.outputs.VERSION }}
+      TAG_NAME: v${{ needs.check.outputs.VERSION }}
+      TAGS: with_gvisor
     steps:
       - name: Checkout the "hidden" branch
         uses: actions/checkout@v6
         with:
           ref: hidden
 
-      - name: Calculate latest version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RESPONSE=$(curl -sSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
-          LATEST_VERSION=$(printf '%s' "${RESPONSE}" | jq -r '.tag_name // empty' | sed 's|^v||')
-          if [ -z "${LATEST_VERSION}" ] || [ "${LATEST_VERSION}" = "null" ]; then
-            echo "Failed to resolve latest mihomo release tag"
-            printf '%s\n' "${RESPONSE}" | head -c 2000
-            exit 1
-          fi
-          echo "Resolved mihomo version: ${LATEST_VERSION}"
-          echo "RELEASE_NAME=${LATEST_VERSION}" >> $GITHUB_ENV
-          echo "TAG_NAME=v${LATEST_VERSION}" >> $GITHUB_ENV
-          echo "TAGS=with_gvisor" >> $GITHUB_ENV
-          echo "VERSION=${LATEST_VERSION}" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Check for new version
-        id: check
-        run: |
-          if [ -f last_version ]; then
-            LAST_VERSION=$(cat last_version)
-          else
-            LAST_VERSION="none"
-          fi
-          FORCE=false
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
-            FORCE=true
-          fi
-          echo "Last version: ${LAST_VERSION}, current version: ${{ env.VERSION }}, force: ${FORCE}"
-
-          NEW=false
-          BUILD=false
-          if [ "${{ env.VERSION }}" != "${LAST_VERSION}" ]; then
-            NEW=true
-            BUILD=true
-          elif [ "${FORCE}" = "true" ]; then
-            BUILD=true
-          fi
-
-          echo "NEW=${NEW}" >> $GITHUB_ENV
-          echo "NEW=${NEW}" >> $GITHUB_OUTPUT
-          echo "BUILD=${BUILD}" >> $GITHUB_ENV
-          echo "BUILD=${BUILD}" >> $GITHUB_OUTPUT
-          echo "VERSION=${{ env.VERSION }}" >> $GITHUB_OUTPUT
-        shell: bash
-
       - name: Download and extract source tarball files
-        if: env.BUILD == 'true' || github.event_name == 'push'
         run: |
-          wget https://github.com/MetaCubeX/mihomo/archive/refs/tags/v${{ env.VERSION }}.tar.gz -O mihomo-${{ env.VERSION }}.tar.gz
-          tar -xf mihomo-${{ env.VERSION }}.tar.gz && mv mihomo-${{ env.VERSION }} mihomo
+          wget https://github.com/MetaCubeX/mihomo/archive/refs/tags/v${VERSION}.tar.gz -O mihomo-${VERSION}.tar.gz
+          tar -xf mihomo-${VERSION}.tar.gz && mv mihomo-${VERSION} mihomo
           cd mihomo
           SING_TUN_VERSION=$(cat go.mod | grep github.com/metacubex/sing-tun | awk '{ print $2 }' | sed 's|v||g')
           echo -e "\nreplace github.com/metacubex/sing-tun v${SING_TUN_VERSION} => ../sing-tun" >> go.mod
@@ -119,7 +139,6 @@ jobs:
           ls -lha
 
       - name: Apply patches
-        if: env.BUILD == 'true' || github.event_name == 'push'
         run: |
           cd mihomo
           cp component/memory/memory_freebsd_amd64.go component/memory/memory_freebsd_riscv64.go
@@ -129,13 +148,11 @@ jobs:
           cp monitor_darwin.go monitor_freebsd.go
 
       - name: Setup go
-        if: env.BUILD == 'true' || github.event_name == 'push'
         uses: actions/setup-go@v6
         with:
           go-version: "stable"
 
       - name: Cache go dependencies
-        if: env.BUILD == 'true' || github.event_name == 'push'
         uses: actions/cache@v5
         with:
           path: |
@@ -143,7 +160,7 @@ jobs:
           key: go-${{ hashFiles('**/go.sum') }}
 
       - name: Cache go build (not arm)
-        if: matrix.goarch != 'arm' && (env.BUILD == 'true' || github.event_name == 'push')
+        if: matrix.goarch != 'arm'
         uses: actions/cache@v5
         with:
           path: |
@@ -151,7 +168,7 @@ jobs:
           key: go-${{ hashFiles('**/go.sum') }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: Cache go build (arm)
-        if: matrix.goarch == 'arm' && (env.BUILD == 'true' || github.event_name == 'push')
+        if: matrix.goarch == 'arm'
         uses: actions/cache@v5
         with:
           path: |
@@ -159,10 +176,9 @@ jobs:
           key: go-${{ hashFiles('**/go.sum') }}-${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.goarm }}
 
       - name: Build and compress binary file
-        if: env.BUILD == 'true' || github.event_name == 'push'
         run: |
           cd mihomo
-          go build -v -tags ${{ env.TAGS }} -trimpath -ldflags '-X "github.com/metacubex/mihomo/constant.Version=${{ env.RELEASE_NAME }}" -X "github.com/metacubex/mihomo/constant.BuildTime=none" -w -s -buildid=' -o mihomo
+          go build -v -tags ${TAGS} -trimpath -ldflags "-X \"github.com/metacubex/mihomo/constant.Version=${RELEASE_NAME}\" -X \"github.com/metacubex/mihomo/constant.BuildTime=none\" -w -s -buildid=" -o mihomo
           if [ "${{ matrix.goarch }}" == 'arm' ]; then
             mv mihomo clash-meta-${{ matrix.goos }}-${{ matrix.goarch }}v${{ matrix.goarm }}
             xz -v clash-meta-${{ matrix.goos }}-${{ matrix.goarch }}v${{ matrix.goarm }}
@@ -177,13 +193,11 @@ jobs:
           CGO_ENABLED: 0
 
       - name: Move file to publish directory
-        if: env.BUILD == 'true' || github.event_name == 'push'
         run: |
           mkdir -p publish
           cp -v mihomo/clash-meta-* publish/
 
       - name: Upload build artifact
-        if: env.BUILD == 'true' || github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: clash-meta-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
@@ -192,8 +206,10 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: build
-    if: needs.build.outputs.BUILD == 'true' || github.event_name == 'push'
+    needs:
+      - check
+      - build
+    if: needs.check.outputs.BUILD == 'true'
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -209,9 +225,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v${{ needs.build.outputs.VERSION }}"
+          TAG="v${{ needs.check.outputs.VERSION }}"
           if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Deleting existing release ${TAG} so it can be recreated as latest"
+            echo "Deleting existing release ${TAG} so it can be replaced"
             gh release delete "${TAG}" --repo "${{ github.repository }}" --yes
           else
             echo "No existing release for ${TAG}"
@@ -220,8 +236,8 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          name: ${{ needs.build.outputs.VERSION }}
-          tag_name: v${{ needs.build.outputs.VERSION }}
+          name: ${{ needs.check.outputs.VERSION }}
+          tag_name: v${{ needs.check.outputs.VERSION }}
           draft: false
           prerelease: false
           make_latest: true
@@ -233,9 +249,9 @@ jobs:
 
   push:
     runs-on: ubuntu-latest
-    if: needs.build.outputs.NEW == 'true'
+    if: needs.check.outputs.NEW == 'true'
     needs:
-      - build
+      - check
       - release
     steps:
       - name: Checkout the "hidden" branch
@@ -245,14 +261,14 @@ jobs:
 
       - name: Update last_version
         run: |
-          echo "${{ needs.build.outputs.VERSION }}" > last_version
+          echo "${{ needs.check.outputs.VERSION }}" > last_version
 
       - name: Push last_version to "hidden" branch
         run: |
           git config --local user.name "Vincent Loeng"
           git config --local user.email "173226116+Vincent-Loeng@users.noreply.github.com"
           git add last_version
-          git commit -m "Release ${{ needs.build.outputs.VERSION }}"
+          git commit -m "Release ${{ needs.check.outputs.VERSION }}"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
