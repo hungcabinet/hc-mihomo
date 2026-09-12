@@ -53,12 +53,21 @@ jobs:
           ref: hidden
 
       - name: Calculate latest version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_VERSION=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name' | sed 's|v||g')
-          if [ "${LATEST_VERSION}" == "null" ]; then
-            echo "wrong version"
+          RESPONSE=$(curl -sSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
+          LATEST_VERSION=$(printf '%s' "${RESPONSE}" | jq -r '.tag_name // empty' | sed 's|^v||')
+          if [ -z "${LATEST_VERSION}" ] || [ "${LATEST_VERSION}" = "null" ]; then
+            echo "Failed to resolve latest mihomo release tag"
+            printf '%s\n' "${RESPONSE}" | head -c 2000
             exit 1
           fi
+          echo "Resolved mihomo version: ${LATEST_VERSION}"
           echo "RELEASE_NAME=${LATEST_VERSION}" >> $GITHUB_ENV
           echo "TAG_NAME=v${LATEST_VERSION}" >> $GITHUB_ENV
           echo "TAGS=with_gvisor" >> $GITHUB_ENV
