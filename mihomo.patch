@@ -2,7 +2,7 @@ diff --git a/component/process/process_freebsd_amd64.go b/component/process/proc
 similarity index 90%
 rename from component/process/process_freebsd_amd64.go
 rename to component/process/process_freebsd.go
-index a6d00c8e..21094aac 100644
+index a6d00c8..21094aa 100644
 --- a/component/process/process_freebsd_amd64.go
 +++ b/component/process/process_freebsd.go
 @@ -177,23 +177,22 @@ func (s *searcher) searchSocketPid(socket uint64) (uint32, error) {
@@ -76,7 +76,7 @@ index a6d00c8e..21094aac 100644
  	return nil
  }
 diff --git a/component/process/process_other.go b/component/process/process_other.go
-index eea6e5fd..83b6f085 100644
+index eea6e5f..83b6f08 100644
 --- a/component/process/process_other.go
 +++ b/component/process/process_other.go
 @@ -1,4 +1,4 @@
@@ -86,10 +86,10 @@ index eea6e5fd..83b6f085 100644
  package process
  
 diff --git a/listener/config/tun.go b/listener/config/tun.go
-index 9a7a119d..ce6d07dc 100644
+index 3cfa17a..5ff8f1b 100644
 --- a/listener/config/tun.go
 +++ b/listener/config/tun.go
-@@ -24,6 +24,7 @@ type Tun struct {
+@@ -25,6 +25,7 @@ type Tun struct {
  	Inet6Address                          []netip.Prefix `yaml:"inet6-address" json:"inet6-address,omitempty"`
  	IPRoute2TableIndex                    int            `yaml:"iproute2-table-index" json:"iproute2-table-index,omitempty"`
  	IPRoute2RuleIndex                     int            `yaml:"iproute2-rule-index" json:"iproute2-rule-index,omitempty"`
@@ -97,7 +97,7 @@ index 9a7a119d..ce6d07dc 100644
  	AutoRedirect                          bool           `yaml:"auto-redirect" json:"auto-redirect,omitempty"`
  	AutoRedirectInputMark                 uint32         `yaml:"auto-redirect-input-mark" json:"auto-redirect-input-mark,omitempty"`
  	AutoRedirectOutputMark                uint32         `yaml:"auto-redirect-output-mark" json:"auto-redirect-output-mark,omitempty"`
-@@ -133,6 +134,9 @@ func (t *Tun) Equal(other Tun) bool {
+@@ -141,6 +142,9 @@ func (t *Tun) Equal(other Tun) bool {
  	if t.IPRoute2RuleIndex != other.IPRoute2RuleIndex {
  		return false
  	}
@@ -108,7 +108,7 @@ index 9a7a119d..ce6d07dc 100644
  		return false
  	}
 diff --git a/listener/listener.go b/listener/listener.go
-index 3a0a8aad..7bdfc1b7 100644
+index 3a0a8aa..7bdfc1b 100644
 --- a/listener/listener.go
 +++ b/listener/listener.go
 @@ -3,6 +3,7 @@ package listener
@@ -147,7 +147,7 @@ index 3a0a8aad..7bdfc1b7 100644
 +	}
  }
 diff --git a/listener/redir/tcp_freebsd.go b/listener/redir/tcp_freebsd.go
-index 9eb199f0..0a3199a3 100644
+index 9eb199f..0a3199a 100644
 --- a/listener/redir/tcp_freebsd.go
 +++ b/listener/redir/tcp_freebsd.go
 @@ -5,62 +5,87 @@ import (
@@ -276,7 +276,7 @@ index 9eb199f0..0a3199a3 100644
 +	return socks5.AddrFromStdAddrPort(netip.AddrPortFrom(addr, port)), nil
  }
 diff --git a/listener/sing_tun/server.go b/listener/sing_tun/server.go
-index 3e5ef591..d4ba81bc 100644
+index 5415b25..c395155 100644
 --- a/listener/sing_tun/server.go
 +++ b/listener/sing_tun/server.go
 @@ -80,6 +80,14 @@ var emptyAddressSet = []*netipx.IPSet{{}}
@@ -305,7 +305,7 @@ index 3e5ef591..d4ba81bc 100644
  	autoRedirectFallbackRuleIndex := options.AutoRedirectIPRoute2FallbackRuleIndex
  	if autoRedirectFallbackRuleIndex == 0 {
  		autoRedirectFallbackRuleIndex = tun.DefaultIPRoute2AutoRedirectFallbackRuleIndex
-@@ -394,6 +406,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
+@@ -401,6 +413,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
  		IPRoute2TableIndex:                    tableIndex,
  		IPRoute2RuleIndex:                     ruleIndex,
  		IPRoute2AutoRedirectFallbackRuleIndex: autoRedirectFallbackRuleIndex,

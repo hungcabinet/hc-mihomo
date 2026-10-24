@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 3efdba99..72630954 100644
+index 3efdba9..7263095 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -7,6 +7,7 @@ build:
@@ -11,7 +11,7 @@ index 3efdba99..72630954 100644
  fmt:
  	@gofumpt -l -w .
 diff --git a/README.md b/README.md
-index 6a8a9c08..5ecb5c0e 100644
+index 6a8a9c0..5ecb5c0 100644
 --- a/README.md
 +++ b/README.md
 @@ -2,7 +2,7 @@
@@ -24,7 +24,7 @@ index 6a8a9c08..5ecb5c0e 100644
  ## License
  
 diff --git a/monitor_other.go b/monitor_other.go
-index 40a936e9..f4e0b330 100644
+index 40a936e..f4e0b33 100644
 --- a/monitor_other.go
 +++ b/monitor_other.go
 @@ -1,4 +1,4 @@
@@ -34,7 +34,7 @@ index 40a936e9..f4e0b330 100644
  package tun
  
 diff --git a/monitor_shared.go b/monitor_shared.go
-index c2b4254a..004700c9 100644
+index 239207b..7f68cae 100644
 --- a/monitor_shared.go
 +++ b/monitor_shared.go
 @@ -1,4 +1,4 @@
@@ -44,18 +44,18 @@ index c2b4254a..004700c9 100644
  package tun
  
 diff --git a/tun.go b/tun.go
-index c4ba540c..87503887 100644
+index cc4fd9f..07b7d3e 100644
 --- a/tun.go
 +++ b/tun.go
-@@ -69,6 +69,7 @@ const (
+@@ -71,6 +71,7 @@ const (
  	DefaultIPRoute2TableIndex                    = 2022
  	DefaultIPRoute2RuleIndex                     = 9000
  	DefaultIPRoute2AutoRedirectFallbackRuleIndex = 32768
 +	DefaultFIBIndex                              = 2022
  )
  
- type Options struct {
-@@ -84,6 +85,7 @@ type Options struct {
+ const (
+@@ -93,6 +94,7 @@ type Options struct {
  	IPRoute2TableIndex                    int
  	IPRoute2RuleIndex                     int
  	IPRoute2AutoRedirectFallbackRuleIndex int
@@ -63,7 +63,7 @@ index c4ba540c..87503887 100644
  	AutoRedirectMarkMode                  bool
  	AutoRedirectInputMark                 uint32
  	AutoRedirectOutputMark                uint32
-@@ -133,6 +135,8 @@ func (o *Options) Inet4GatewayAddr() netip.Addr {
+@@ -204,6 +206,8 @@ func (o *Options) Inet4GatewayAddr() netip.Addr {
  				return o.Inet4Address[0].Addr().Next()
  			}
  		case "darwin":
@@ -72,7 +72,7 @@ index c4ba540c..87503887 100644
  			return o.Inet4Address[0].Addr()
  		default:
  			if HasNextAddress(o.Inet4Address[0], 1) {
-@@ -157,6 +161,8 @@ func (o *Options) Inet6GatewayAddr() netip.Addr {
+@@ -228,6 +232,8 @@ func (o *Options) Inet6GatewayAddr() netip.Addr {
  				return o.Inet6Address[0].Addr().Next()
  			}
  		case "darwin":
@@ -81,24 +81,9 @@ index c4ba540c..87503887 100644
  			return o.Inet6Address[0].Addr()
  		default:
  			if HasNextAddress(o.Inet6Address[0], 1) {
-diff --git a/tun_darwin.go b/tun_darwin.go
-index 21b5db61..8ef7a7fc 100644
---- a/tun_darwin.go
-+++ b/tun_darwin.go
-@@ -9,8 +9,8 @@ import (
- 	"unsafe"
- 
- 	"github.com/metacubex/sing-tun/internal/gtcpip/header"
--	"github.com/metacubex/sing-tun/internal/rawfile_darwin"
--	"github.com/metacubex/sing-tun/internal/stopfd_darwin"
-+	rawfile "github.com/metacubex/sing-tun/internal/rawfile_darwin"
-+	stopfd "github.com/metacubex/sing-tun/internal/stopfd_darwin"
- 	"github.com/metacubex/sing/common"
- 	"github.com/metacubex/sing/common/buf"
- 	E "github.com/metacubex/sing/common/exceptions"
 diff --git a/tun_freebsd.go b/tun_freebsd.go
 new file mode 100644
-index 00000000..03d150dc
+index 0000000..03d150d
 --- /dev/null
 +++ b/tun_freebsd.go
 @@ -0,0 +1,830 @@
@@ -934,7 +919,7 @@ index 00000000..03d150dc
 +}
 diff --git a/tun_freebsd_gvisor.go b/tun_freebsd_gvisor.go
 new file mode 100644
-index 00000000..8cda7a02
+index 0000000..8cda7a0
 --- /dev/null
 +++ b/tun_freebsd_gvisor.go
 @@ -0,0 +1,138 @@
@@ -1077,7 +1062,7 @@ index 00000000..8cda7a02
 +func (e *FreeBSDEndpoint) SetOnCloseAction(f func()) {
 +}
 diff --git a/tun_nondarwin.go b/tun_nondarwin.go
-index 0faa2c9e..053b931d 100644
+index 0faa2c9..053b931 100644
 --- a/tun_nondarwin.go
 +++ b/tun_nondarwin.go
 @@ -1,4 +1,4 @@
@@ -1087,7 +1072,7 @@ index 0faa2c9e..053b931d 100644
  package tun
  
 diff --git a/tun_other.go b/tun_other.go
-index 1db48f93..432d26bf 100644
+index 1db48f9..432d26b 100644
 --- a/tun_other.go
 +++ b/tun_other.go
 @@ -1,4 +1,4 @@
@@ -1097,7 +1082,7 @@ index 1db48f93..432d26bf 100644
  package tun
  
 diff --git a/tun_rules.go b/tun_rules.go
-index 7adc9484..5487fdb8 100644
+index 7adc948..5487fdb 100644
 --- a/tun_rules.go
 +++ b/tun_rules.go
 @@ -101,7 +101,7 @@ func buildExcludedRanges(includeRanges []ranges.Range[uint32], excludeRanges []r
