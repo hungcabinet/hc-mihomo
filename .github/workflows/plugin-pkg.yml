@@ -1,0 +1,98 @@
+name: Plugin package
+
+on:
+  push:
+    branches:
+      - plugin
+  workflow_dispatch:
+
+concurrency:
+  group: plugin-pkg-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve latest mihomo release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)
+          if [ -z "${TAG}" ] || [ "${TAG}" = "null" ]; then
+            echo "No GitHub release found in ${{ github.repository }}"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${VERSION}" > plugin-version.txt
+          echo "Using mihomo ${VERSION}"
+
+      - name: Download published FreeBSD binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download --repo "${{ github.repository }}" --pattern "clash-meta-freebsd-amd64.xz"
+          gh release download --repo "${{ github.repository }}" --pattern "clash-meta-freebsd-arm64.xz"
+          test -f clash-meta-freebsd-amd64.xz
+          test -f clash-meta-freebsd-arm64.xz
+          ls -lah clash-meta-freebsd-amd64.xz clash-meta-freebsd-arm64.xz
+
+      - name: Build os-mihomo packages
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.3"
+          usesh: true
+          sync: rsync
+          copyback: true
+          run: |
+            set -e
+            VERSION=$(cat plugin-version.txt)
+            mkdir -p dist
+            sh plugin/build-pkg.sh \
+              --version "${VERSION}" \
+              --arch amd64 \
+              --binary-xz clash-meta-freebsd-amd64.xz \
+              --output-dir dist
+            sh plugin/build-pkg.sh \
+              --version "${VERSION}" \
+              --arch aarch64 \
+              --binary-xz clash-meta-freebsd-arm64.xz \
+              --output-dir dist
+            ls -lah dist
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: os-mihomo
+          path: dist/os-mihomo-*.pkg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Print download link
+        run: |
+          set -euo pipefail
+          URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "Artifact download: ${URL}"
+          {
+            echo "## os-mihomo packages"
+            echo
+            echo "Download the artifacts from this run:"
+            echo
+            echo "${URL}"
+            echo
+            echo "Files:"
+            echo
+            for f in dist/os-mihomo-*.pkg; do
+              echo "- \`$(basename "${f}")\`"
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"

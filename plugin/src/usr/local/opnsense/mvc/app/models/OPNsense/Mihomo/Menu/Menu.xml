@@ -1,0 +1,5 @@
+<menu>
+    <Services>
+        <Mihomo VisibleName="Mihomo" cssClass="fa fa-exchange fa-fw" url="/ui/mihomo"/>
+    </Services>
+</menu>

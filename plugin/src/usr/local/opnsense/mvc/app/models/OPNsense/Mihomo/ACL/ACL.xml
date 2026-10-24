@@ -1,0 +1,10 @@
+<acl>
+    <page-services-mihomo>
+        <name>Services: Mihomo</name>
+        <description>Allow access to the Mihomo plugin</description>
+        <patterns>
+            <pattern>ui/mihomo/*</pattern>
+            <pattern>api/mihomo/*</pattern>
+        </patterns>
+    </page-services-mihomo>
+</acl>

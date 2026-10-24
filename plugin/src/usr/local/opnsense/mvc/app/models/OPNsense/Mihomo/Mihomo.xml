@@ -1,0 +1,13 @@
+<model>
+    <mount>//OPNsense/mihomo</mount>
+    <description>Mihomo proxy service</description>
+    <version>1.0.0</version>
+    <items>
+        <general>
+            <enabled type="BooleanField">
+                <default>0</default>
+                <Required>Y</Required>
+            </enabled>
+        </general>
+    </items>
+</model>

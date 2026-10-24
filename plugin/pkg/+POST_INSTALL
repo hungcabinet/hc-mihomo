@@ -1,0 +1,28 @@
+#!/bin/sh
+
+mkdir -p /usr/local/etc/mihomo /var/log/mihomo
+
+if [ ! -f /usr/local/etc/mihomo/config.yaml ] && [ -f /usr/local/share/examples/mihomo/config.yaml ]; then
+	cp /usr/local/share/examples/mihomo/config.yaml /usr/local/etc/mihomo/config.yaml
+	chmod 0600 /usr/local/etc/mihomo/config.yaml
+fi
+
+if command -v service >/dev/null 2>&1; then
+	service configd restart >/dev/null 2>&1 || true
+fi
+
+if [ -f /usr/local/opnsense/scripts/mihomo/migrate.php ] && command -v php >/dev/null 2>&1; then
+	php /usr/local/opnsense/scripts/mihomo/migrate.php >/dev/null 2>&1 || true
+fi
+
+if command -v configctl >/dev/null 2>&1; then
+	configctl template reload OPNsense/Mihomo >/dev/null 2>&1 || true
+	configctl template reload OPNsense/Syslog >/dev/null 2>&1 || true
+fi
+
+if command -v pluginctl >/dev/null 2>&1; then
+	pluginctl -s syslog restart >/dev/null 2>&1 || true
+fi
+
+rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json
+exit 0
