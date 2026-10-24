@@ -201,7 +201,7 @@ index 0000000..03d150d
 +		}
 +
 +		var resolvString string = ""
-+		if options.AutoRoute && !options.EXP_DisableDNSHijack {
++		if options.DNSModeOrDefault() != DNSModeDisabled {
 +			resolvString, err = setDNSServers(options)
 +			if err != nil {
 +				return nil, E.Errors(err, tunFile.Close(), destroyTun(ifName))
@@ -276,7 +276,7 @@ index 0000000..03d150d
 +		}
 +
 +		var errs error
-+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
++		if t.options.DNSModeOrDefault() != DNSModeDisabled {
 +			errs = E.Errors(errs, restoreDNSServers(t.resolv))
 +		}
 +
